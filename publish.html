@@ -7,7 +7,7 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root { --bg: #f0ede6; --paper: #faf8f3; --ink: #1a1714; --ink2: #5a5650; --border: #c8c4bb; }
+  :root { --bg: #f0ede6; --ink: #1a1714; --ink2: #5a5650; --border: #c8c4bb; }
   body {
     font-family: 'Space Mono', monospace;
     background: var(--bg);
@@ -21,18 +21,8 @@
     padding: 24px;
     text-align: center;
   }
-  #status {
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-  #detail {
-    font-size: 11px;
-    color: var(--ink2);
-    line-height: 1.8;
-    max-width: 380px;
-  }
+  #status { font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+  #detail { font-size: 11px; color: var(--ink2); line-height: 1.9; max-width: 400px; }
   #spinner {
     width: 24px; height: 24px;
     border: 2px solid var(--border);
@@ -43,10 +33,11 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   #spinner.done  { animation: none; border-color: #22c55e; border-top-color: #22c55e; }
   #spinner.error { animation: none; border-color: #ef4444; border-top-color: #ef4444; }
-  #retry-btn {
+  #spinner.idle  { animation: none; border-color: var(--border); border-top-color: var(--border); }
+  .btn {
     display: none;
-    margin-top: 8px;
-    padding: 8px 20px;
+    margin-top: 4px;
+    padding: 9px 22px;
     font-family: inherit;
     font-size: 11px;
     font-weight: 700;
@@ -57,121 +48,252 @@
     border: none;
     cursor: pointer;
   }
+  .btn:hover { opacity: 0.8; }
   a { color: var(--ink); }
 </style>
 </head>
 <body>
   <div id="spinner"></div>
-  <div id="status">Loading canvas…</div>
+  <div id="status">Starting…</div>
   <div id="detail"></div>
-  <button id="retry-btn" onclick="run()">Try again</button>
+  <button id="auth-btn"  class="btn" onclick="startOAuth()">Connect Wikipedia</button>
+  <button id="retry-btn" class="btn" onclick="main()">Try again</button>
 
 <script>
-const statusEl = document.getElementById('status');
-const detailEl = document.getElementById('detail');
-const spinner  = document.getElementById('spinner');
-const retryBtn = document.getElementById('retry-btn');
+// ── DOM helpers ──────────────────────────────────────────────────────────────
+const $status  = document.getElementById('status');
+const $detail  = document.getElementById('detail');
+const $spinner = document.getElementById('spinner');
+const $authBtn = document.getElementById('auth-btn');
+const $retryBtn = document.getElementById('retry-btn');
 
-const API = 'https://en.wikipedia.org/w/api.php';
-const ORIGIN = encodeURIComponent(location.origin);
-
-function setError(msg, hint) {
-  statusEl.textContent = 'Error';
-  detailEl.innerHTML   = msg + (hint ? '<br><br>' + hint : '');
-  spinner.className    = 'error';
-  retryBtn.style.display = 'inline-block';
+function setLoading(msg, sub = '') {
+  $spinner.className = '';
+  $status.textContent = msg;
+  $detail.innerHTML = sub;
+  $authBtn.style.display = $retryBtn.style.display = 'none';
+}
+function setDone(msg, sub = '') {
+  $spinner.className = 'done';
+  $status.textContent = msg;
+  $detail.innerHTML = sub;
+  $authBtn.style.display = $retryBtn.style.display = 'none';
+}
+function setError(msg, sub = '', showRetry = true, showAuth = false) {
+  $spinner.className = 'error';
+  $status.textContent = 'Error';
+  $detail.innerHTML = msg + (sub ? '<br><br>' + sub : '');
+  $retryBtn.style.display = showRetry ? 'inline-block' : 'none';
+  $authBtn.style.display  = showAuth  ? 'inline-block' : 'none';
+}
+function setIdle(msg, sub = '') {
+  $spinner.className = 'idle';
+  $status.textContent = msg;
+  $detail.innerHTML = sub;
+  $retryBtn.style.display = 'none';
 }
 
-async function run() {
-  retryBtn.style.display = 'none';
-  spinner.className = '';
-  statusEl.textContent = 'Loading canvas\u2026';
-  detailEl.textContent = '';
+// ── PKCE helpers ─────────────────────────────────────────────────────────────
+function b64url(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+function randomB64url(bytes = 32) {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return b64url(arr.buffer);
+}
+async function pkcePair() {
+  const verifier  = randomB64url(32);
+  const hashBuf   = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = b64url(hashBuf);
+  return { verifier, challenge };
+}
 
-  // --- 1. Read payload from localStorage (written by wiki-paint.html) ---
-  const raw = localStorage.getItem('wiki-paint-pending');
-  if (!raw) {
-    setError(
-      'No pending publish found.',
-      'Go back to the paint app and click \u2191\u00a0Publish\u00a0to\u00a0Wikipedia again.'
-    );
+// ── Constants ─────────────────────────────────────────────────────────────────
+const WP_AUTH    = 'https://meta.wikimedia.org/w/rest.php/oauth2/authorize';
+const WP_TOKEN   = 'https://meta.wikimedia.org/w/rest.php/oauth2/access_token';
+const WP_API     = 'https://en.wikipedia.org/w/api.php';
+const REDIRECT   = location.origin + location.pathname; // this exact page
+
+// ── OAuth flow ────────────────────────────────────────────────────────────────
+async function startOAuth() {
+  const clientId = getClientId();
+  if (!clientId) {
+    setError('No OAuth Client ID found.', 'Go back to the paint app, open setup, and enter your Wikipedia OAuth Client ID.');
     return;
   }
+  setLoading('Connecting to Wikipedia\u2026', 'You\u2019ll be redirected to authorize, then brought right back.');
 
-  let wikitext, page;
-  try {
-    ({ wikitext, page } = JSON.parse(raw));
-  } catch(e) {
-    setError('Failed to read canvas data: ' + e.message);
-    return;
-  }
+  const { verifier, challenge } = await pkcePair();
+  localStorage.setItem('oauth_verifier', verifier);
+  localStorage.setItem('wp_client_id', clientId);   // survives the redirect
 
-  // --- 2. Check Wikipedia login + get CSRF token ---
-  statusEl.textContent = 'Checking Wikipedia login\u2026';
-  let meta;
-  try {
-    const res = await fetch(
-      `${API}?action=query&meta=userinfo|tokens&type=csrf&format=json&origin=${ORIGIN}`,
-      { credentials: 'include' }
-    );
-    meta = await res.json();
-  } catch(e) {
-    setError('Could not reach Wikipedia: ' + e.message);
-    return;
-  }
+  const url = WP_AUTH + '?' + new URLSearchParams({
+    response_type:         'code',
+    client_id:             clientId,
+    redirect_uri:          REDIRECT,
+    scope:                 'basic editpage',
+    code_challenge:        challenge,
+    code_challenge_method: 'S256',
+  });
+  location.href = url;
+}
 
-  const userinfo = meta?.query?.userinfo;
-  if (!userinfo || userinfo.anon !== undefined) {
-    // Not logged in — prompt user, keep localStorage so they can retry
-    setError(
-      'You\u2019re not logged in to Wikipedia.',
-      '<a href="https://en.wikipedia.org/w/index.php?title=Special:UserLogin" target="_blank">' +
-      'Log in to Wikipedia \u2197</a><br>then click Try again below.'
-    );
-    return;
-  }
+async function exchangeCode(code) {
+  const clientId = localStorage.getItem('wp_client_id');
+  const verifier = localStorage.getItem('oauth_verifier');
+  if (!clientId || !verifier) throw new Error('Missing OAuth state — please try again.');
 
-  const csrfToken = meta.query.tokens.csrftoken;
+  const res = await fetch(WP_TOKEN, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body:    new URLSearchParams({
+      grant_type:    'authorization_code',
+      code,
+      redirect_uri:  REDIRECT,
+      client_id:     clientId,
+      code_verifier: verifier,
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(data.error_description || JSON.stringify(data));
 
-  // --- 3. Submit the edit ---
-  statusEl.textContent = 'Saving to Wikipedia\u2026';
-  detailEl.textContent = 'Logged in as ' + userinfo.name + '. Saving to ' + page + '\u2026';
+  localStorage.setItem('wp_access_token', data.access_token);
+  localStorage.removeItem('oauth_verifier');
+  // Clean ?code= from URL so a reload doesn't re-use the one-time code
+  history.replaceState({}, '', location.pathname);
+  return data.access_token;
+}
 
-  let result;
-  try {
-    const body = new URLSearchParams({
+// ── Wikipedia API ─────────────────────────────────────────────────────────────
+async function getCSRF(token) {
+  const res = await fetch(WP_API + '?action=query&meta=tokens&type=csrf&format=json', {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.info);
+  return data.query.tokens.csrftoken;
+}
+
+async function editPage(token, page, wikitext) {
+  const csrf = await getCSRF(token);
+  const res  = await fetch(WP_API, {
+    method:  'POST',
+    headers: { Authorization: 'Bearer ' + token },
+    body:    new URLSearchParams({
       action:  'edit',
       title:   page,
       text:    wikitext,
       summary: 'Updated Wiki Paint canvas snapshot',
-      token:   csrfToken,
-      format:  'json'
-    });
-    const res = await fetch(`${API}?origin=${ORIGIN}`, {
-      method: 'POST',
-      body,
-      credentials: 'include'
-    });
-    result = await res.json();
-  } catch(e) {
-    setError('Network error while saving: ' + e.message);
+      token:   csrf,
+      format:  'json',
+    }),
+  });
+  const data = await res.json();
+  if (data.error)               throw new Error(data.error.code + ': ' + data.error.info);
+  if (data.edit?.result !== 'Success') throw new Error('Unexpected response: ' + JSON.stringify(data));
+  return data;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function getPending() {
+  const raw = localStorage.getItem('wiki-paint-pending');
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+function getClientId() {
+  // Try pending payload first, fall back to the key saved before the OAuth redirect
+  const pending = getPending();
+  return (pending && pending.clientId) || localStorage.getItem('wp_client_id') || '';
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+async function main() {
+  $retryBtn.style.display = 'none';
+  $authBtn.style.display  = 'none';
+
+  // ── Step 1: Handle OAuth return ──
+  const urlParams = new URLSearchParams(location.search);
+  const code      = urlParams.get('code');
+  const oauthErr  = urlParams.get('error');
+
+  if (oauthErr) {
+    setError('Wikipedia declined the authorization: ' + oauthErr, '', true, false);
     return;
   }
 
-  if (result?.edit?.result === 'Success') {
-    // Success — now safe to clear localStorage
-    localStorage.removeItem('wiki-paint-pending');
-    spinner.className    = 'done';
-    statusEl.textContent = 'Published!';
-    const pageUrl = 'https://en.wikipedia.org/wiki/' + encodeURIComponent(page).replace(/%3A/g, ':').replace(/%2F/g, '/');
-    detailEl.innerHTML = 'Saved to <a href="' + pageUrl + '" target="_blank">' + page + ' \u2197</a>';
-  } else {
-    const errInfo = result?.error ? result.error.code + ': ' + result.error.info : JSON.stringify(result);
-    setError('Wikipedia rejected the edit.', errInfo);
+  let accessToken = localStorage.getItem('wp_access_token');
+
+  if (code && !accessToken) {
+    setLoading('Completing authorization\u2026');
+    try {
+      accessToken = await exchangeCode(code);
+    } catch(e) {
+      setError('Authorization failed: ' + e.message, '', true, false);
+      return;
+    }
   }
+
+  // ── Step 2: Check we have content to publish ──
+  const pending = getPending();
+  if (!pending) {
+    setError(
+      'No pending publish found.',
+      'Go back to the paint app and click \u2191\u00a0Publish\u00a0to\u00a0Wikipedia again.',
+      false, false
+    );
+    return;
+  }
+  const { wikitext, page } = pending;
+
+  // ── Step 3: Need OAuth token? ──
+  if (!accessToken) {
+    const clientId = getClientId();
+    if (!clientId) {
+      setError(
+        'No OAuth Client ID configured.',
+        'Go back to the paint app, open setup, and add your Wikipedia OAuth Client ID.',
+        false, false
+      );
+      return;
+    }
+    setIdle(
+      'Connect Wikipedia',
+      'One-time setup: authorize Wiki Paint to edit on your behalf.<br>' +
+      'Your drawing is saved \u2014 you\u2019ll come right back here after.'
+    );
+    $authBtn.style.display = 'inline-block';
+    return;
+  }
+
+  // ── Step 4: Publish ──
+  setLoading('Publishing to Wikipedia\u2026', 'Saving to ' + page + '\u2026');
+  try {
+    await editPage(accessToken, page, wikitext);
+  } catch(e) {
+    // Token may have been revoked — clear it and let user re-auth
+    if (e.message.includes('mwoauth') || e.message.includes('invalid') || e.message.includes('expired')) {
+      localStorage.removeItem('wp_access_token');
+      setError('Wikipedia session expired.', 'Click Try again to re-authorize.', false, true);
+      $retryBtn.style.display = 'inline-block';
+      return;
+    }
+    setError('Edit failed: ' + e.message, '', true, false);
+    return;
+  }
+
+  // ── Success ──
+  localStorage.removeItem('wiki-paint-pending');
+  const pageUrl = 'https://en.wikipedia.org/wiki/' + page.replace(/ /g, '_');
+  setDone(
+    'Published!',
+    'Saved to <a href="' + pageUrl + '" target="_blank">' + page + ' \u2197</a>'
+  );
 }
 
-run();
+main();
 </script>
 </body>
 </html>
