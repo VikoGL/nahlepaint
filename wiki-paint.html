@@ -210,78 +210,13 @@
     font-size: 10px;
     letter-spacing: 0.05em;
     padding: 4px 10px;
-    border: 1px solid var(--border);
-    background: var(--paper);
-    color: var(--ink);
+    border: 1px solid var(--ink);
+    background: var(--ink);
+    color: var(--paper);
     cursor: pointer;
     text-transform: uppercase;
   }
-  #wikicode-btn:hover { background: var(--bg); }
-
-  /* Modal */
-  #modal-bg {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(26,23,20,0.6);
-    z-index: 100;
-    align-items: center;
-    justify-content: center;
-  }
-  #modal-bg.open { display: flex; }
-
-  #modal {
-    background: var(--paper);
-    border: 1px solid var(--border);
-    padding: 20px;
-    max-width: 500px;
-    width: 90%;
-    max-height: 80vh;
-    overflow-y: auto;
-  }
-
-  #modal h2 {
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    margin-bottom: 12px;
-  }
-
-  #modal p {
-    font-size: 11px;
-    line-height: 1.8;
-    color: var(--ink2);
-    margin-bottom: 12px;
-  }
-
-  #wikitext-area {
-    font-family: 'Space Mono', monospace;
-    font-size: 10px;
-    width: 100%;
-    height: 140px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    padding: 8px;
-    color: var(--ink);
-    resize: vertical;
-    line-height: 1.5;
-  }
-
-  #modal-btns { display: flex; gap: 8px; margin-top: 10px; }
-  #modal-copy, #modal-close {
-    font-family: 'Space Mono', monospace;
-    font-size: 10px;
-    letter-spacing: 0.05em;
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    background: var(--paper);
-    color: var(--ink);
-    cursor: pointer;
-    text-transform: uppercase;
-  }
-  #modal-copy { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-  #modal-copy:active { opacity: 0.8; }
+  #wikicode-btn:hover { opacity: 0.85; }
 
   #toast {
     position: fixed;
@@ -434,22 +369,10 @@
 
 <div id="footer" style="display:none">
   <span id="last-action">—</span>
-  <button id="wikicode-btn">Get Embed Code</button>
+  <button id="wikicode-btn">↑ Publish to Wikipedia</button>
 </div>
 
-<!-- Modal for embed code -->
-<div id="modal-bg">
-  <div id="modal">
-    <h2>Embed on Wikipedia</h2>
-    <p>Paste this into your userpage source editor. The iframe loads the live canvas so every visitor can draw on it.</p>
-    <textarea id="wikitext-area" readonly></textarea>
-    <p style="margin-top:8px;">You'll need to host <code>wiki-paint.html</code> somewhere (GitHub Pages works great). Replace the <code>src</code> URL with your hosted address.</p>
-    <div id="modal-btns">
-      <button id="modal-copy">Copy</button>
-      <button id="modal-close">Close</button>
-    </div>
-  </div>
-</div>
+<div id="toast"></div>
 
 <div id="toast"></div>
 
@@ -654,25 +577,50 @@ brushRange.addEventListener('input', () => {
   brushVal.textContent = brushSize;
 });
 
-// Embed modal
+// Publish — build wikitext snapshot and redirect to pre-filled Wikipedia edit page
+const WIKI_PAGE = 'User:Nahleghini/sandbox';
+
+function buildWikitext() {
+  const liveUrl = window.location.href;
+  let pixelRows = '';
+  for (let r = 0; r < ROWS; r++) {
+    let rowHtml = '';
+    let c = 0;
+    while (c < COLS) {
+      const key = `${r}_${c}`;
+      const color = grid[key] || '#e8e4dc';
+      let run = 1;
+      while (c + run < COLS) {
+        const nkey = `${r}_${c + run}`;
+        if ((grid[nkey] || '#e8e4dc') === color) run++;
+        else break;
+      }
+      const w = run * 8 + (run - 1);
+      rowHtml += `<div style="width:${w}px;height:8px;background:${color};display:inline-block;"></div>`;
+      c += run;
+    }
+    pixelRows += `<div style="display:block;line-height:0;font-size:0;">${rowHtml}</div>`;
+  }
+  return (
+    `<!-- WIKI-PAINT-START -->\n` +
+    `<div style="display:inline-block;border:1px solid #a2a9b1;padding:4px;background:#e8e4dc;line-height:0;font-size:0;">\n` +
+    pixelRows + `\n` +
+    `</div>\n` +
+    `<div style="font-size:12px;margin-top:6px;">[${liveUrl} ✏ Draw on this canvas]</div>\n` +
+    `<!-- WIKI-PAINT-END -->`
+  );
+}
+
 document.getElementById('wikicode-btn').addEventListener('click', () => {
-  const url = window.location.href.split('?')[0];
-  const params = new URLSearchParams(window.location.search);
-  const embedUrl = url + '?key=' + encodeURIComponent(params.get('key') || '') + '&project=' + encodeURIComponent(params.get('project') || '');
-  document.getElementById('wikitext-area').value =
-    `<div style="border:1px solid #ccc;display:inline-block;">\n` +
-    `[${embedUrl} Open Wiki Paint]\n` +
-    `</div>\n\n` +
-    `Or as a raw iframe (only works on some wikis/userpages):\n` +
-    `<iframe src="${embedUrl}" width="620" height="480" frameborder="0" scrolling="no"></iframe>`;
-  document.getElementById('modal-bg').classList.add('open');
+  const wikitext = buildWikitext();
+  const editUrl = 'https://en.wikipedia.org/w/index.php' +
+    '?title=' + encodeURIComponent(WIKI_PAGE) +
+    '&action=edit' +
+    '&summary=' + encodeURIComponent('Updated Wiki Paint canvas snapshot') +
+    '&text=' + encodeURIComponent(wikitext);
+  window.open(editUrl, '_blank');
 });
-document.getElementById('modal-close').addEventListener('click', () => document.getElementById('modal-bg').classList.remove('open'));
-document.getElementById('modal-copy').addEventListener('click', () => {
-  const ta = document.getElementById('wikitext-area');
-  ta.select();
-  navigator.clipboard.writeText(ta.value).then(() => showToast('Copied!'));
-});
+
 
 function showToast(msg) {
   const t = document.getElementById('toast');
