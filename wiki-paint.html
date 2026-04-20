@@ -611,7 +611,7 @@ function buildWikitext() {
   );
 }
 
-document.getElementById('wikicode-btn').addEventListener('click', async () => {
+document.getElementById('wikicode-btn').addEventListener('click', () => {
   const btn = document.getElementById('wikicode-btn');
   btn.textContent = 'Saving…';
   btn.disabled = true;
@@ -619,19 +619,14 @@ document.getElementById('wikicode-btn').addEventListener('click', async () => {
   try {
     const wikitext = buildWikitext();
 
-    // Save wikitext to a single Firestore doc so the relay page can read it
-    await setDoc(doc(db, 'publish', 'pending'), {
+    // Pass wikitext via localStorage — same GitHub Pages origin, no Firebase permissions needed
+    localStorage.setItem('wiki-paint-pending', JSON.stringify({
       wikitext,
-      page: WIKI_PAGE,
-      t: serverTimestamp()
-    });
+      page: WIKI_PAGE
+    }));
 
     // Build relay URL (same GitHub Pages origin, no CORS issues)
-    const relayBase = window.location.href.replace('wiki-paint.html', 'publish.html');
-    const params = new URLSearchParams(window.location.search);
-    const relayUrl = relayBase +
-      '?key=' + encodeURIComponent(params.get('key') || '') +
-      '&project=' + encodeURIComponent(params.get('project') || '');
+    const relayUrl = window.location.href.replace('wiki-paint.html', 'publish.html');
 
     showToast('Opening Wikipedia…');
     window.open(relayUrl, '_blank');
