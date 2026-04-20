@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Publishing to Wikipedia…</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --bg: #f0ede6; --paper: #faf8f3; --ink: #1a1714; --ink2: #5a5650; --border: #c8c4bb; }
+  body {
+    font-family: 'Space Mono', monospace;
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+    text-align: center;
+  }
+  #status {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  #detail {
+    font-size: 11px;
+    color: var(--ink2);
+    line-height: 1.8;
+    max-width: 360px;
+  }
+  #spinner {
+    width: 24px; height: 24px;
+    border: 2px solid var(--border);
+    border-top-color: var(--ink);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #spinner.done { animation: none; border-color: #22c55e; border-top-color: #22c55e; }
+  #spinner.error { animation: none; border-color: #ef4444; border-top-color: #ef4444; }
+  a { color: var(--ink); }
+</style>
+</head>
+<body>
+  <div id="spinner"></div>
+  <div id="status">Loading canvas…</div>
+  <div id="detail"></div>
+
+  <!-- Hidden form that will POST to Wikipedia -->
+  <form id="wp-form" method="POST" action="https://en.wikipedia.org/w/index.php" style="display:none">
+    <input type="hidden" name="action" value="submit">
+    <input type="hidden" name="title" id="f-title">
+    <input type="hidden" name="wpTextbox1" id="f-text">
+    <input type="hidden" name="wpSummary" value="Updated Wiki Paint canvas snapshot">
+    <input type="hidden" name="wpSave" value="1">
+    <input type="hidden" name="wpEditToken" value="+\\">
+  </form>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const status = document.getElementById('status');
+const detail = document.getElementById('detail');
+const spinner = document.getElementById('spinner');
+
+function setError(msg, hint = '') {
+  status.textContent = 'Error';
+  detail.innerHTML = msg + (hint ? '<br><br>' + hint : '');
+  spinner.className = 'error';
+}
+
+const params = new URLSearchParams(window.location.search);
+const apiKey = params.get('key');
+const projectId = params.get('project');
+
+if (!apiKey || !projectId) {
+  setError('Missing Firebase credentials in URL.', 'Go back and use the Publish button from the paint app.');
+} else {
+  try {
+    const app = initializeApp({ apiKey, projectId, appId: 'wiki-paint-relay' });
+    const db = getFirestore(app);
+
+    status.textContent = 'Fetching canvas…';
+    const snap = await getDoc(doc(db, 'publish', 'pending'));
+
+    if (!snap.exists()) {
+      setError('No pending publish found.', 'Go back to the paint app and click Publish again.');
+    } else {
+      const { wikitext, page } = snap.data();
+
+      status.textContent = 'Submitting to Wikipedia…';
+      detail.textContent = 'You may be asked to log in. Your drawing will be saved to ' + page;
+
+      document.getElementById('f-title').value = page;
+      document.getElementById('f-text').value = wikitext;
+
+      // Short delay so the user can read the message, then submit
+      setTimeout(() => {
+        document.getElementById('wp-form').submit();
+      }, 1200);
+    }
+  } catch(e) {
+    setError('Firebase error: ' + e.message);
+  }
+}
+</script>
+</body>
+</html>
