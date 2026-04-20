@@ -625,8 +625,8 @@ document.getElementById('wikicode-btn').addEventListener('click', () => {
       page: WIKI_PAGE
     }));
 
-    // Build relay URL (same GitHub Pages origin, no CORS issues)
-    const relayUrl = window.location.href.replace('wiki-paint.html', 'publish.html');
+    // Build relay URL robustly — works even if served as index.html or /
+    const relayUrl = new URL('publish.html', window.location.href).href;
 
     showToast('Opening Wikipedia…');
     window.open(relayUrl, '_blank');
