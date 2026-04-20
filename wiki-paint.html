@@ -606,27 +606,84 @@ function buildWikitext() {
     `<div style="display:inline-block;border:1px solid #a2a9b1;padding:4px;background:#e8e4dc;line-height:0;font-size:0;">\n` +
     pixelRows + `\n` +
     `</div>\n` +
-    `<div style="font-size:12px;margin-top:6px;">[${liveUrl} ✏ Draw on this canvas]</div>\n` +
+    `<div style="font-size:12px;margin-top:6px;">[${liveUrl} Draw on this canvas]</div>\n` +
     `<!-- WIKI-PAINT-END -->`
   );
 }
 
-document.getElementById('wikicode-btn').addEventListener('click', () => {
-  const wikitext = buildWikitext();
-  const editUrl = 'https://en.wikipedia.org/w/index.php' +
-    '?title=' + encodeURIComponent(WIKI_PAGE) +
-    '&action=edit' +
-    '&summary=' + encodeURIComponent('Updated Wiki Paint canvas snapshot') +
-    '&text=' + encodeURIComponent(wikitext);
-  window.open(editUrl, '_blank');
+const API = 'https://en.wikipedia.org/w/api.php';
+
+async function wpApi(params) {
+  const body = new URLSearchParams({ ...params, format: 'json', formatversion: '2' });
+  const res = await fetch(API + '?origin=*', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body
+  });
+  return res.json();
+}
+
+document.getElementById('wikicode-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('wikicode-btn');
+  btn.textContent = 'Publishing…';
+  btn.disabled = true;
+
+  try {
+    // 1. Check login status
+    const whoami = await wpApi({ action: 'query', meta: 'userinfo' });
+    const username = whoami?.query?.userinfo?.name;
+    const isAnon = whoami?.query?.userinfo?.anon !== undefined;
+
+    if (isAnon) {
+      showToast('You must be logged in to Wikipedia first!');
+      window.open('https://en.wikipedia.org/w/index.php?title=Special:UserLogin&returnto=' + encodeURIComponent(WIKI_PAGE), '_blank');
+      btn.textContent = '↑ Publish to Wikipedia';
+      btn.disabled = false;
+      return;
+    }
+
+    // 2. Get CSRF token
+    const tokenData = await wpApi({ action: 'query', meta: 'tokens', type: 'csrf' });
+    const token = tokenData?.query?.tokens?.csrftoken;
+    if (!token) throw new Error('Could not get edit token');
+
+    // 3. Submit edit
+    const wikitext = buildWikitext();
+    const editResult = await wpApi({
+      action: 'edit',
+      title: WIKI_PAGE,
+      text: wikitext,
+      summary: 'Updated Wiki Paint canvas snapshot',
+      token
+    });
+
+    if (editResult?.edit?.result === 'Success') {
+      showToast('Published! (' + (username || 'anonymous') + ')');
+      setLastAction('Published by ' + (username || '?') + ' just now');
+    } else {
+      const errCode = editResult?.error?.code || editResult?.edit?.result || 'Unknown error';
+      if (errCode === 'badtoken' || errCode === 'mustbeloggedin') {
+        showToast('Log in to Wikipedia first!');
+        window.open('https://en.wikipedia.org/w/index.php?title=Special:UserLogin&returnto=' + encodeURIComponent(WIKI_PAGE), '_blank');
+      } else {
+        showToast('Error: ' + errCode);
+      }
+    }
+  } catch(e) {
+    showToast('Failed: ' + e.message);
+  }
+
+  btn.textContent = '↑ Publish to Wikipedia';
+  btn.disabled = false;
 });
 
 
-function showToast(msg) {
+function showToast(msg, duration = 2500) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 1800);
+  setTimeout(() => t.classList.remove('show'), duration);
 }
 
 function setLastAction(msg) {
