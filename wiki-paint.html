@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wiki Paint</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f0ede6;
+    --paper: #faf8f3;
+    --ink: #1a1714;
+    --ink2: #5a5650;
+    --accent: #d4411e;
+    --border: #c8c4bb;
+    --cell: 12px;
+    --cols: 48;
+    --rows: 32;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    font-family: 'Space Mono', monospace;
+    color: var(--ink);
+    overflow: hidden;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  #header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    max-width: calc(var(--cols) * (var(--cell) + 1px) + 2px);
+  }
+
+  #title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+
+  #live-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #22c55e;
+    animation: pulse 2s infinite;
+    flex-shrink: 0;
+  }
+
+  #live-dot.offline { background: #ef4444; animation: none; }
+  #live-dot.connecting { background: #f59e0b; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  #status-text {
+    font-size: 10px;
+    color: var(--ink2);
+    letter-spacing: 0.05em;
+  }
+
+  #painters-count {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--ink2);
+    letter-spacing: 0.05em;
+  }
+
+  /* Toolbar */
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: calc(var(--cols) * (var(--cell) + 1px) + 2px);
+    background: var(--paper);
+    border: 1px solid var(--border);
+    padding: 7px 10px;
+  }
+
+  #palette {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .swatch {
+    width: 20px; height: 20px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.1s;
+    flex-shrink: 0;
+  }
+  .swatch:hover { transform: scale(1.2); }
+  .swatch.active {
+    border-color: var(--ink);
+    transform: scale(1.15);
+    outline: 1px solid var(--bg);
+    outline-offset: 1px;
+  }
+
+  .sep { width: 1px; height: 22px; background: var(--border); margin: 0 2px; flex-shrink:0; }
+
+  .tool-btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: background 0.1s;
+  }
+  .tool-btn:hover { background: var(--bg); }
+  .tool-btn.active {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+
+  #brush-wrap {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--ink2);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 55px; height: 4px;
+    background: var(--border);
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    background: var(--ink);
+    border-radius: 0;
+    cursor: pointer;
+  }
+
+  #color-preview {
+    width: 22px; height: 22px;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  /* Canvas grid */
+  #canvas-wrap {
+    position: relative;
+    line-height: 0;
+    border: 1px solid var(--border);
+    cursor: crosshair;
+    user-select: none;
+    touch-action: none;
+    background: var(--paper);
+    flex-shrink: 0;
+  }
+
+  #grid-canvas {
+    display: block;
+  }
+
+  #overlay {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+    opacity: 0.7;
+  }
+
+  /* Footer */
+  #footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    max-width: calc(var(--cols) * (var(--cell) + 1px) + 2px);
+    font-size: 10px;
+    color: var(--ink2);
+    letter-spacing: 0.04em;
+  }
+
+  #wikicode-btn {
+    margin-left: auto;
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  #wikicode-btn:hover { background: var(--bg); }
+
+  /* Modal */
+  #modal-bg {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(26,23,20,0.6);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  #modal-bg.open { display: flex; }
+
+  #modal {
+    background: var(--paper);
+    border: 1px solid var(--border);
+    padding: 20px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+
+  #modal h2 {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 12px;
+  }
+
+  #modal p {
+    font-size: 11px;
+    line-height: 1.8;
+    color: var(--ink2);
+    margin-bottom: 12px;
+  }
+
+  #wikitext-area {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    width: 100%;
+    height: 140px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 8px;
+    color: var(--ink);
+    resize: vertical;
+    line-height: 1.5;
+  }
+
+  #modal-btns { display: flex; gap: 8px; margin-top: 10px; }
+  #modal-copy, #modal-close {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  #modal-copy { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  #modal-copy:active { opacity: 0.8; }
+
+  #toast {
+    position: fixed;
+    bottom: 20px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--ink);
+    color: var(--paper);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    padding: 7px 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 200;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Setup screen */
+  #setup-screen {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+  }
+  #setup-screen h1 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  #setup-screen p {
+    font-size: 11px;
+    line-height: 1.8;
+    color: var(--ink2);
+    max-width: 360px;
+    text-align: center;
+  }
+  #setup-screen input, #setup-screen textarea {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    width: 100%;
+    max-width: 380px;
+    padding: 8px 10px;
+    background: var(--paper);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    outline: none;
+  }
+  #setup-screen textarea { height: 70px; resize: vertical; }
+  #setup-screen label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink2); }
+  #start-btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 8px 24px;
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    cursor: pointer;
+  }
+  #start-btn:hover { opacity: 0.85; }
+  .setup-field { display: flex; flex-direction: column; gap: 5px; width: 100%; max-width: 380px; }
+  #setup-note { font-size: 10px; color: var(--ink2); max-width: 380px; text-align: center; line-height: 1.7; }
+  #setup-note a { color: var(--accent); }
+
+  #config-hint {
+    font-size: 10px;
+    color: var(--ink2);
+    max-width: 380px;
+    text-align: center;
+    line-height: 1.7;
+    background: var(--paper);
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+  }
+  #config-hint code {
+    font-family: 'Space Mono', monospace;
+    background: var(--bg);
+    padding: 1px 4px;
+    font-size: 10px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Setup screen shown until Firebase is configured -->
+<div id="setup-screen">
+  <h1>Wiki Paint</h1>
+  <p>Collaborative pixel art for your Wikipedia userpage. Anyone who visits can draw — all marks sync in real time.</p>
+
+  <div class="setup-field">
+    <label>Firebase API Key</label>
+    <input id="cfg-apikey" type="text" placeholder="AIzaSy...">
+  </div>
+  <div class="setup-field">
+    <label>Firebase Project ID</label>
+    <input id="cfg-projectid" type="text" placeholder="my-wiki-paint">
+  </div>
+
+  <button id="start-btn">Launch Paint</button>
+
+  <div id="config-hint">
+    <strong>How to get these:</strong><br>
+    1. Go to <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a><br>
+    2. Create a project → Add Web App<br>
+    3. Enable <code>Firestore Database</code> in test mode<br>
+    4. Copy your <code>apiKey</code> and <code>projectId</code> from the config snippet
+  </div>
+
+  <p id="setup-note">
+    Your credentials stay in the browser. For the iframe embed, add them to the URL:<br>
+    <code style="word-break:break-all;">?key=YOUR_KEY&project=YOUR_PROJECT_ID</code>
+  </p>
+</div>
+
+<!-- Main app (hidden until configured) -->
+<div id="header" style="display:none">
+  <span id="title">Wiki Paint</span>
+  <div id="live-dot" class="connecting"></div>
+  <span id="status-text">Connecting…</span>
+  <span id="painters-count"></span>
+</div>
+
+<div id="toolbar" style="display:none">
+  <div id="color-preview"></div>
+  <div id="palette"></div>
+  <div class="sep"></div>
+  <button class="tool-btn active" id="btn-draw">Draw</button>
+  <button class="tool-btn" id="btn-erase">Erase</button>
+  <button class="tool-btn" id="btn-clear">Clear</button>
+  <div class="sep"></div>
+  <div id="brush-wrap">
+    Brush
+    <input type="range" id="brush-range" min="1" max="4" value="1">
+    <span id="brush-val">1</span>
+  </div>
+</div>
+
+<div id="canvas-wrap" style="display:none">
+  <canvas id="grid-canvas"></canvas>
+  <canvas id="overlay"></canvas>
+</div>
+
+<div id="footer" style="display:none">
+  <span id="last-action">—</span>
+  <button id="wikicode-btn">Get Embed Code</button>
+</div>
+
+<!-- Modal for embed code -->
+<div id="modal-bg">
+  <div id="modal">
+    <h2>Embed on Wikipedia</h2>
+    <p>Paste this into your userpage source editor. The iframe loads the live canvas so every visitor can draw on it.</p>
+    <textarea id="wikitext-area" readonly></textarea>
+    <p style="margin-top:8px;">You'll need to host <code>wiki-paint.html</code> somewhere (GitHub Pages works great). Replace the <code>src</code> URL with your hosted address.</p>
+    <div id="modal-btns">
+      <button id="modal-copy">Copy</button>
+      <button id="modal-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, writeBatch, serverTimestamp, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const COLS = 48, ROWS = 32, CELL = 12, GAP = 1;
+const W = COLS * (CELL + GAP) - GAP;
+const H = ROWS * (CELL + GAP) - GAP;
+
+const PALETTE = [
+  '#faf8f3','#d4d0c8','#8c8880','#1a1714',
+  '#e63030','#f07030','#f0b800','#28a428',
+  '#1890d0','#5050e0','#c030c0','#d47828',
+  '#f8a0a0','#f8c878','#f0f068','#90e090',
+  '#88d0f8','#a8a8f8','#e898e8','#c87848',
+  '#601010','#603010','#606000','#106010',
+  '#0c3858','#181870','#500850','#3a1800',
+];
+
+let db, grid = {}, currentColor = '#e63030', erasing = false, brushSize = 1;
+let painting = false, pendingWrites = {}, flushTimeout = null;
+let unsubscribe = null;
+
+const canvas = document.getElementById('grid-canvas');
+const overlay = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const octx = overlay.getContext('2d');
+
+canvas.width = overlay.width = W;
+canvas.height = overlay.height = H;
+
+// Draw grid background
+function drawBackground() {
+  ctx.fillStyle = '#faf8f3';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#e8e4dc';
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const x = c * (CELL + GAP);
+      const y = r * (CELL + GAP);
+      ctx.fillRect(x, y, CELL, CELL);
+    }
+  }
+}
+
+function cellXY(r, c) {
+  return [c * (CELL + GAP), r * (CELL + GAP)];
+}
+
+function drawCell(r, c, color) {
+  const [x, y] = cellXY(r, c);
+  ctx.fillStyle = color || '#e8e4dc';
+  ctx.fillRect(x, y, CELL, CELL);
+}
+
+function redrawAll() {
+  drawBackground();
+  for (const key in grid) {
+    const [r, c] = key.split('_').map(Number);
+    if (grid[key]) drawCell(r, c, grid[key]);
+  }
+}
+
+function posToCell(mx, my) {
+  const c = Math.floor(mx / (CELL + GAP));
+  const r = Math.floor(my / (CELL + GAP));
+  return { r: Math.max(0, Math.min(ROWS-1, r)), c: Math.max(0, Math.min(COLS-1, c)) };
+}
+
+function paintBrush(r, c) {
+  const half = Math.floor(brushSize / 2);
+  for (let dr = -half; dr <= half; dr++) {
+    for (let dc = -half; dc <= half; dc++) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+      const key = `${nr}_${nc}`;
+      const color = erasing ? '' : currentColor;
+      grid[key] = color;
+      drawCell(nr, nc, color);
+      pendingWrites[key] = color;
+    }
+  }
+  scheduleSave();
+}
+
+function scheduleSave() {
+  if (flushTimeout) clearTimeout(flushTimeout);
+  flushTimeout = setTimeout(flushWrites, 300);
+}
+
+async function flushWrites() {
+  if (!db || Object.keys(pendingWrites).length === 0) return;
+  const writes = { ...pendingWrites };
+  pendingWrites = {};
+  const batch = writeBatch(db);
+  for (const key in writes) {
+    const ref = doc(db, 'pixels', key);
+    if (writes[key]) {
+      batch.set(ref, { color: writes[key], t: serverTimestamp() });
+    } else {
+      batch.delete(ref);
+    }
+  }
+  try {
+    await batch.commit();
+  } catch (e) {
+    console.error('Write error', e);
+  }
+}
+
+// Cursor overlay
+let cursorR = -1, cursorC = -1;
+function drawOverlay(r, c) {
+  octx.clearRect(0, 0, W, H);
+  if (r < 0) return;
+  const half = Math.floor(brushSize / 2);
+  octx.strokeStyle = '#1a1714';
+  octx.lineWidth = 1;
+  for (let dr = -half; dr <= half; dr++) {
+    for (let dc = -half; dc <= half; dc++) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+      const [x, y] = cellXY(nr, nc);
+      octx.strokeRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
+    }
+  }
+}
+
+// Events
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const scaleY = H / rect.height;
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+  return { mx: cx * scaleX, my: cy * scaleY };
+}
+
+const wrap = document.getElementById('canvas-wrap');
+wrap.addEventListener('mousedown', e => { painting = true; const {mx,my} = getPos(e); const {r,c} = posToCell(mx,my); paintBrush(r,c); });
+wrap.addEventListener('mousemove', e => {
+  const {mx,my} = getPos(e);
+  const {r,c} = posToCell(mx,my);
+  if (r !== cursorR || c !== cursorC) { cursorR = r; cursorC = c; drawOverlay(r,c); }
+  if (painting) paintBrush(r,c);
+});
+wrap.addEventListener('mouseleave', () => { painting = false; cursorR = cursorC = -1; drawOverlay(-1,-1); });
+document.addEventListener('mouseup', () => { painting = false; });
+wrap.addEventListener('touchstart', e => { e.preventDefault(); painting = true; const {mx,my} = getPos(e); const {r,c} = posToCell(mx,my); paintBrush(r,c); }, {passive:false});
+wrap.addEventListener('touchmove', e => { e.preventDefault(); if (!painting) return; const {mx,my} = getPos(e); const {r,c} = posToCell(mx,my); paintBrush(r,c); }, {passive:false});
+document.addEventListener('touchend', () => { painting = false; });
+
+// Palette
+const paletteEl = document.getElementById('palette');
+const colorPreview = document.getElementById('color-preview');
+PALETTE.forEach(col => {
+  const sw = document.createElement('div');
+  sw.className = 'swatch' + (col === currentColor ? ' active' : '');
+  sw.style.background = col;
+  if (col === '#faf8f3') sw.style.border = '2px solid #c8c4bb';
+  sw.addEventListener('click', () => {
+    currentColor = col; erasing = false;
+    document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+    sw.classList.add('active');
+    colorPreview.style.background = col;
+    document.getElementById('btn-draw').classList.add('active');
+    document.getElementById('btn-erase').classList.remove('active');
+  });
+  paletteEl.appendChild(sw);
+});
+colorPreview.style.background = currentColor;
+
+document.getElementById('btn-draw').addEventListener('click', () => {
+  erasing = false;
+  document.getElementById('btn-draw').classList.add('active');
+  document.getElementById('btn-erase').classList.remove('active');
+});
+document.getElementById('btn-erase').addEventListener('click', () => {
+  erasing = true;
+  document.getElementById('btn-erase').classList.add('active');
+  document.getElementById('btn-draw').classList.remove('active');
+});
+document.getElementById('btn-clear').addEventListener('click', async () => {
+  if (!db) return;
+  if (!confirm('Clear the entire canvas for everyone?')) return;
+  grid = {};
+  redrawAll();
+  // Delete all pixels
+  const snap = await getDocs(collection(db, 'pixels'));
+  const batch = writeBatch(db);
+  snap.forEach(d => batch.delete(d.ref));
+  await batch.commit();
+  setLastAction('Canvas cleared');
+});
+
+const brushRange = document.getElementById('brush-range');
+const brushVal = document.getElementById('brush-val');
+brushRange.addEventListener('input', () => {
+  brushSize = +brushRange.value;
+  brushVal.textContent = brushSize;
+});
+
+// Embed modal
+document.getElementById('wikicode-btn').addEventListener('click', () => {
+  const url = window.location.href.split('?')[0];
+  const params = new URLSearchParams(window.location.search);
+  const embedUrl = url + '?key=' + encodeURIComponent(params.get('key') || '') + '&project=' + encodeURIComponent(params.get('project') || '');
+  document.getElementById('wikitext-area').value =
+    `<div style="border:1px solid #ccc;display:inline-block;">\n` +
+    `[${embedUrl} Open Wiki Paint]\n` +
+    `</div>\n\n` +
+    `Or as a raw iframe (only works on some wikis/userpages):\n` +
+    `<iframe src="${embedUrl}" width="620" height="480" frameborder="0" scrolling="no"></iframe>`;
+  document.getElementById('modal-bg').classList.add('open');
+});
+document.getElementById('modal-close').addEventListener('click', () => document.getElementById('modal-bg').classList.remove('open'));
+document.getElementById('modal-copy').addEventListener('click', () => {
+  const ta = document.getElementById('wikitext-area');
+  ta.select();
+  navigator.clipboard.writeText(ta.value).then(() => showToast('Copied!'));
+});
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+function setLastAction(msg) {
+  document.getElementById('last-action').textContent = msg;
+}
+
+// Firebase init
+function launchApp(apiKey, projectId) {
+  const liveDot = document.getElementById('live-dot');
+  const statusText = document.getElementById('status-text');
+
+  try {
+    const app = initializeApp({ apiKey, projectId, appId: 'wiki-paint' });
+    db = getFirestore(app);
+  } catch(e) {
+    statusText.textContent = 'Firebase error: ' + e.message;
+    liveDot.className = 'offline';
+    return;
+  }
+
+  // Show UI
+  ['header','toolbar','canvas-wrap','footer'].forEach(id => {
+    document.getElementById(id).style.display = '';
+  });
+  document.getElementById('header').style.display = 'flex';
+  document.getElementById('toolbar').style.display = 'flex';
+  document.getElementById('canvas-wrap').style.display = 'block';
+  document.getElementById('footer').style.display = 'flex';
+  document.getElementById('setup-screen').style.display = 'none';
+
+  drawBackground();
+
+  // Load initial state then subscribe
+  statusText.textContent = 'Loading…';
+  getDocs(collection(db, 'pixels')).then(snap => {
+    snap.forEach(d => {
+      grid[d.id] = d.data().color;
+    });
+    redrawAll();
+
+    statusText.textContent = 'Live';
+    liveDot.className = '';
+    document.getElementById('live-dot').style.cssText = '';
+
+    // Real-time listener
+    unsubscribe = onSnapshot(collection(db, 'pixels'), snapshot => {
+      snapshot.docChanges().forEach(change => {
+        const key = change.doc.id;
+        if (change.type === 'removed') {
+          grid[key] = '';
+          const [r,c] = key.split('_').map(Number);
+          drawCell(r, c, '');
+        } else {
+          const color = change.doc.data().color;
+          grid[key] = color;
+          const [r,c] = key.split('_').map(Number);
+          drawCell(r, c, color);
+        }
+      });
+    }, err => {
+      statusText.textContent = 'Error: ' + err.message;
+      liveDot.className = 'offline';
+    });
+
+  }).catch(err => {
+    statusText.textContent = 'Load failed: ' + err.message;
+    liveDot.className = 'offline';
+  });
+}
+
+// Check URL params first
+const params = new URLSearchParams(window.location.search);
+const urlKey = params.get('key');
+const urlProject = params.get('project');
+if (urlKey && urlProject) {
+  launchApp(urlKey, urlProject);
+} else {
+  // Show setup
+  document.getElementById('start-btn').addEventListener('click', () => {
+    const key = document.getElementById('cfg-apikey').value.trim();
+    const proj = document.getElementById('cfg-projectid').value.trim();
+    if (!key || !proj) { alert('Please enter both fields.'); return; }
+    const newUrl = window.location.pathname + '?key=' + encodeURIComponent(key) + '&project=' + encodeURIComponent(proj);
+    window.history.replaceState({}, '', newUrl);
+    launchApp(key, proj);
+  });
+}
+</script>
+</body>
+</html>
