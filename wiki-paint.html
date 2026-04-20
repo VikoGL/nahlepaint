@@ -577,7 +577,7 @@ brushRange.addEventListener('input', () => {
   brushVal.textContent = brushSize;
 });
 
-// Publish — build wikitext snapshot and redirect to pre-filled Wikipedia edit page
+// Publish — save wikitext to Firebase then open relay page which form-POSTs to Wikipedia
 const WIKI_PAGE = 'User:Nahleghini/sandbox';
 
 function buildWikitext() {
@@ -611,67 +611,32 @@ function buildWikitext() {
   );
 }
 
-const API = 'https://en.wikipedia.org/w/api.php';
-
-async function wpApi(params) {
-  const body = new URLSearchParams({ ...params, format: 'json', formatversion: '2' });
-  const res = await fetch(API + '?origin=*', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body
-  });
-  return res.json();
-}
-
 document.getElementById('wikicode-btn').addEventListener('click', async () => {
   const btn = document.getElementById('wikicode-btn');
-  btn.textContent = 'Publishing…';
+  btn.textContent = 'Saving…';
   btn.disabled = true;
 
   try {
-    // 1. Check login status
-    const whoami = await wpApi({ action: 'query', meta: 'userinfo' });
-    const username = whoami?.query?.userinfo?.name;
-    const isAnon = whoami?.query?.userinfo?.anon !== undefined;
-
-    if (isAnon) {
-      showToast('You must be logged in to Wikipedia first!');
-      window.open('https://en.wikipedia.org/w/index.php?title=Special:UserLogin&returnto=' + encodeURIComponent(WIKI_PAGE), '_blank');
-      btn.textContent = '↑ Publish to Wikipedia';
-      btn.disabled = false;
-      return;
-    }
-
-    // 2. Get CSRF token
-    const tokenData = await wpApi({ action: 'query', meta: 'tokens', type: 'csrf' });
-    const token = tokenData?.query?.tokens?.csrftoken;
-    if (!token) throw new Error('Could not get edit token');
-
-    // 3. Submit edit
     const wikitext = buildWikitext();
-    const editResult = await wpApi({
-      action: 'edit',
-      title: WIKI_PAGE,
-      text: wikitext,
-      summary: 'Updated Wiki Paint canvas snapshot',
-      token
+
+    // Save wikitext to a single Firestore doc so the relay page can read it
+    await setDoc(doc(db, 'publish', 'pending'), {
+      wikitext,
+      page: WIKI_PAGE,
+      t: serverTimestamp()
     });
 
-    if (editResult?.edit?.result === 'Success') {
-      showToast('Published! (' + (username || 'anonymous') + ')');
-      setLastAction('Published by ' + (username || '?') + ' just now');
-    } else {
-      const errCode = editResult?.error?.code || editResult?.edit?.result || 'Unknown error';
-      if (errCode === 'badtoken' || errCode === 'mustbeloggedin') {
-        showToast('Log in to Wikipedia first!');
-        window.open('https://en.wikipedia.org/w/index.php?title=Special:UserLogin&returnto=' + encodeURIComponent(WIKI_PAGE), '_blank');
-      } else {
-        showToast('Error: ' + errCode);
-      }
-    }
+    // Build relay URL (same GitHub Pages origin, no CORS issues)
+    const relayBase = window.location.href.replace('wiki-paint.html', 'publish.html');
+    const params = new URLSearchParams(window.location.search);
+    const relayUrl = relayBase +
+      '?key=' + encodeURIComponent(params.get('key') || '') +
+      '&project=' + encodeURIComponent(params.get('project') || '');
+
+    showToast('Opening Wikipedia…');
+    window.open(relayUrl, '_blank');
   } catch(e) {
-    showToast('Failed: ' + e.message);
+    showToast('Error: ' + e.message);
   }
 
   btn.textContent = '↑ Publish to Wikipedia';
